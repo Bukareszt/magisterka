@@ -302,7 +302,7 @@ def main():
     parser.add_argument("--data_size", type=int, default=100000, help="Number of samples to use from dataset")
     parser.add_argument("--model_name", type=str, default="vicuna-13b", help="Model name to filter in dataset")
     parser.add_argument("--first_round_only", action="store_true", default=True, help="Use only first round of conversation")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training")
+    parser.add_argument("--batch_size", type=int, default=2, help="Batch size for training")
     parser.add_argument("--num_epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--learning_rate", type=float, default=3e-5, help="Learning rate")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay")
