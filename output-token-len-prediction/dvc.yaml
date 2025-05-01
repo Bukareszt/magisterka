@@ -45,6 +45,7 @@ stages:
         --seed 42
         --use_wandb
         --model_name "microsoft/phi-2"
+        --inference_model "microsoft/phi-2"
       deps:
         - output_len_prediction.py
         - models.py
