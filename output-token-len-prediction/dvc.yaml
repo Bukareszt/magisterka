@@ -41,10 +41,10 @@ stages:
       cmd: >
         python output_len_prediction.py
         --n_tokens ${item}
-        --data_size 100
+        --data_size 100000
         --seed 42
         --use_wandb
-        --model_name "lmsys/vicuna-13b-v1.3"
+        --model_name "vicuna-13b"
       deps:
         - output_len_prediction.py
         - models.py
