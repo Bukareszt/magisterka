@@ -38,7 +38,6 @@ stages:
         - evaluate.py
         - dataloading.py
         - logger.py
-        - ${dataset_path}_preview${item}
       params:
         - params.yaml:train
         - params.yaml:matrix.add_response_token
