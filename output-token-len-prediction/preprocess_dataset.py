@@ -151,7 +151,7 @@ def recalc_labels_and_one_hot_model_name(example):
 
 
 def calc_percentile(dataset):
-    if FLAG_VICUNA_DATA_ONLY:
+    if USE_SPECIFIC_MODEL:
         output_token_lengths = []
         for sample in dataset:
             output_token_lengths.append(sample['num_tokens'])
@@ -198,13 +198,12 @@ def preprocess_dataset(dataset):
         print('Num samples after filtering: ', len(dataset))
     else:
         dataset = exact_multi_round_prompt(dataset)
-    if FLAG_VICUNA_DATA_ONLY:
+    if USE_SPECIFIC_MODEL:
         dataset = dataset.remove_columns(['model'])
     else:
         dataset = dataset.map(replace_model_name_by_idx)
-    # Tokenize the user prompt
-    # dataset = dataset.map(tokenize_function, batched=True, remove_columns=['prompt'])
-    dataset = dataset.map(tokenize_function, batched=False, remove_columns=['prompt'])
+
+    dataset = dataset.map(tokenize_function, batched=True, remove_columns=['prompt'])
     return dataset
 
 
@@ -222,7 +221,7 @@ if __name__ == '__main__':
 
     # 0: regression; 1: binary classification; 2: multi-class classification;
     task_type = args.task_type
-    FLAG_VICUNA_DATA_ONLY = not args.all_models
+    USE_SPECIFIC_MODEL = not args.all_models
     FLAG_FIRST_ROUND_ONLY = not args.multi_round
     FLAG_HEAD_TAIL = args.head_tail
     ADD_RESPONSE_TOKENS = args.add_response_token
@@ -251,7 +250,7 @@ if __name__ == '__main__':
         print('Model name not found in the list of models:', model_names)
         exit()
 
-    dataset_path = args.model_name.lower()+'_' if FLAG_VICUNA_DATA_ONLY else ''
+    dataset_path = args.model_name.lower()+'_' if USE_SPECIFIC_MODEL else ''
     dataset_path = dataset_path if task_type == 0 else dataset_path + 'cls_' if task_type == 1 else dataset_path + 'multi_cls_'
     if FLAG_FIRST_ROUND_ONLY:
         dataset_path = 'first_round_data_' + dataset_path
@@ -263,7 +262,7 @@ if __name__ == '__main__':
 
     dataset = load_dataset(dataset_name, split='train')
     dataset = dataset.select(range(selected_data_size))
-    if FLAG_VICUNA_DATA_ONLY:
+    if USE_SPECIFIC_MODEL:
         dataset = dataset.filter(lambda example: example["model"] == args.model_name)
     dataset = dataset.shuffle(seed=1)
     dataset = preprocess_dataset(dataset)
