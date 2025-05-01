@@ -31,4 +31,3 @@ stages:
         - evaluate.py
         - dataloading.py
         - logger.py
-        - data/lmsys_first_round_data_vicuna-13b_preview${item}
