@@ -47,7 +47,7 @@ def generate_response_and_get_length(prompts, model, tokenizer, device, max_new_
         with torch.no_grad():
             outputs = model.generate(
                 input_ids=input_ids,
-                attention_mask=attention_mask
+                attention_mask=attention_mask,
                 do_sample=False,  # Use greedy decoding for deterministic outputs
                 pad_token_id=tokenizer.eos_token_id
             )
