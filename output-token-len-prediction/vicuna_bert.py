@@ -14,7 +14,7 @@ class VicunaToBertRegressor(nn.Module):
             else torch.device("cpu")
         )
         print(f"[INFO] Using device: {self.device}")
-        
+
         # Store max_output_length for scaling
         self.max_output_length = max_output_length
 
@@ -61,15 +61,13 @@ class VicunaToBertRegressor(nn.Module):
 
         # 🧠 Generowanie i hidden states
         with torch.no_grad():
-            output = self.vicuna.generate(
+            vicuna_outputs = self.vicuna(
                 **inputs,
-                max_new_tokens=n_tokens,
-                return_dict_in_generate=True,
-                output_hidden_states=True
+                output_hidden_states=True,
+                return_dict=True
             )
-
-        # 🔍 Pobranie hidden state z wygenerowanych tokenów
-        last_hidden_states = output.hidden_states[-1]
+        # Hidden states z ostatniej warstwy (tylko inputy)
+        last_hidden_states = vicuna_outputs.hidden_states[-1]  # shape: [B, T, D_vicuna]
         gen_hidden = last_hidden_states[0][:, -n_tokens:, :]  # [B, n_tokens, D_vicuna]
 
         # ⚙️ Adapter → BERT
@@ -80,7 +78,7 @@ class VicunaToBertRegressor(nn.Module):
         # 🧠 BERT + regresja
         bert_output = self.bert(inputs_embeds=bert_input, attention_mask=attention_mask)
         cls_token = bert_output.last_hidden_state[:, 0, :]
-        
+
         # Scale the sigmoid output to range [0, max_output_length]
         return self.regressor(cls_token).squeeze(-1) * self.max_output_length
 
