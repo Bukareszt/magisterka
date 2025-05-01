@@ -36,7 +36,7 @@
 # Pipeline for output length prediction only
 stages:
   train_outlen:
-    foreach: [0, 2, 4, 6, 8, 10]
+    foreach: [2, 4, 6, 8, 10]
     do:
       cmd: >
         python output_len_prediction.py
