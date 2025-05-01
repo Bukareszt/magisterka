@@ -21,6 +21,13 @@ class OutputLengthDataset(Dataset):
         return len(self.prompts)
     
     def __getitem__(self, idx):
+        # Handle case where idx might be a list or other iterable
+        if isinstance(idx, (list, tuple, np.ndarray)):
+            return {
+                'prompt': [self.prompts[i] for i in idx],
+                'output_length': [self.output_lengths[i] for i in idx]
+            }
+        # Normal case - idx is an integer
         return {
             'prompt': self.prompts[idx],
             'output_length': self.output_lengths[idx]
@@ -81,29 +88,36 @@ def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", first_round
     dataset = load_dataset("lmsys/lmsys-chat-1m", split="train")
     dataset = dataset.select(range(data_size))
     
-    # Filter for the specified model and process data
+    # Filter for the specified model and shuffle the dataset
     print(f"Filtering for model: {model_name}")
     filtered_dataset = dataset.filter(lambda example: example["model"] == model_name)
+    filtered_dataset = filtered_dataset.shuffle(seed=seed)
+    
+    print(f"Dataset filtered: {len(filtered_dataset)} samples")
     
     def process_example(example):
         prompt, output_len = extract_first_round_prompt(example, vicuna_tokenizer)
         return {"prompt": prompt, "output_length": output_len}
 
-    processed_dataset = filtered_dataset.map(process_example).filter(lambda x: x["output_length"] > 1)
+    # Process the dataset
+    processed_dataset = filtered_dataset.map(process_example)
+    processed_dataset = processed_dataset.filter(lambda x: x["output_length"] > 1)
     
-    # Extract prompts and output lengths
+    # Extract prompts and output lengths as lists
     print("Processing conversations...")
-    prompts = []
-    output_lengths = []
-    
-    for example in tqdm(processed_dataset):
-        prompts.append(example["prompt"])
-        output_lengths.append(example["output_length"])
+    prompts = processed_dataset["prompt"]
+    output_lengths = processed_dataset["output_length"]
     
     # Split into train and validation sets
     train_prompts, val_prompts, train_lengths, val_lengths = train_test_split(
         prompts, output_lengths, test_size=0.1, random_state=seed
     )
+    
+    # Convert to lists to ensure compatibility
+    train_prompts = list(train_prompts)
+    val_prompts = list(val_prompts)
+    train_lengths = list(train_lengths) 
+    val_lengths = list(val_lengths)
     
     print(f"Dataset prepared: {len(train_prompts)} training samples, {len(val_prompts)} validation samples")
     return train_prompts, val_prompts, train_lengths, val_lengths
@@ -288,6 +302,12 @@ def main():
         first_round_only=args.first_round_only,
         seed=args.seed
     )
+    
+    # Ensure prompts and lengths are proper lists
+    train_prompts = list(train_prompts)
+    val_prompts = list(val_prompts)
+    train_lengths = list(train_lengths)
+    val_lengths = list(val_lengths)
     
     train_dataset = OutputLengthDataset(train_prompts, train_lengths)
     val_dataset = OutputLengthDataset(val_prompts, val_lengths)
