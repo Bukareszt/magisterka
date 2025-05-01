@@ -76,14 +76,13 @@ def extract_first_round_prompt(example):
     
     return user_content
 
-def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", batch_size=1000, 
+def prepare_lmsys_dataset(data_size=100000, batch_size=1000, 
                           seed=42, inference_model=None, inference_tokenizer=None, device=None):
     """
     Load and prepare the lmsys-chat-1m dataset for output length prediction
     
     Args:
         data_size: Number of samples to use
-        model_name: Name of the model to filter for
         batch_size: Process this many examples at a time to save memory
         seed: Random seed
         inference_model: Model to use for generating responses
@@ -98,10 +97,6 @@ def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", batch_size=
     dataset = load_dataset("lmsys/lmsys-chat-1m", split="train", streaming=True)
     dataset = dataset.take(data_size)
     
-    # Filter for the specified model
-    print(f"Filtering for model: {model_name}")
-    filtered_dataset = dataset.filter(lambda example: example["model"] == model_name)
-    
     # Process dataset in batches to avoid memory issues
     all_prompts = []
     
@@ -109,7 +104,7 @@ def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", batch_size=
     batch_count = 0
     current_batch = []
     
-    for example in tqdm(filtered_dataset, desc="Processing examples"):
+    for example in tqdm(dataset, desc="Processing examples"):
         current_batch.append(example)
         
         # Process batch when it reaches the specified size
@@ -346,8 +341,8 @@ def main():
     
     # Load inference model and tokenizer
     print(f"Loading inference model: {args.inference_model}")
-    inference_tokenizer = AutoTokenizer.from_pretrained(args.inference_model, use_fast=False)
-    inference_model = AutoModelForCausalLM.from_pretrained(args.inference_model).to(device)
+    inference_tokenizer = AutoTokenizer.from_pretrained(args.inference_model, use_fast=False, trust_remote_code=True)
+    inference_model = AutoModelForCausalLM.from_pretrained(args.inference_model, trust_remote_code=True).to(device)
     
     # Add special tokens if needed
     if inference_tokenizer.pad_token is None:
@@ -356,7 +351,6 @@ def main():
     print("Loading and preparing dataset...")
     train_prompts, val_prompts, train_lengths, val_lengths = prepare_lmsys_dataset(
         data_size=args.data_size,
-        model_name=args.model_name,
         batch_size=args.processing_batch_size,
         seed=args.seed,
         inference_model=inference_model,
