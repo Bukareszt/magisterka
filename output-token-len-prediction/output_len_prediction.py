@@ -37,6 +37,9 @@ def generate_response_and_get_length(prompts, model, tokenizer, device, max_new_
     """Generate responses for prompts and return their token lengths"""
     output_lengths = []
     
+    # Set model to evaluation mode
+    model.eval()
+    
     # Process in batches to avoid OOM issues
     for i in range(0, len(prompts), batch_size):
         batch_prompts = prompts[i:i+batch_size]
@@ -78,7 +81,8 @@ def extract_first_round_prompt(example):
     return user_content
 
 def prepare_lmsys_dataset(data_size=100000, batch_size=1000, 
-                          seed=42, inference_model=None, inference_tokenizer=None, device=None):
+                          seed=42, inference_model=None, inference_tokenizer=None, device=None,
+                          max_new_tokens=512, inference_batch_size=2):
     """
     Load and prepare the lmsys-chat-1m dataset for output length prediction
     
@@ -89,22 +93,30 @@ def prepare_lmsys_dataset(data_size=100000, batch_size=1000,
         inference_model: Model to use for generating responses
         inference_tokenizer: Tokenizer for the inference model
         device: Device to run inference on
+        max_new_tokens: Maximum number of new tokens to generate
+        inference_batch_size: Batch size for inference
         
     Returns:
         train_prompts, val_prompts, train_lengths, val_lengths
     """
+    # Set random seed for reproducibility
+    random.seed(seed)
+    np.random.seed(seed)
+    
     # Load dataset in streaming mode to save memory
     print(f"Loading lmsys/lmsys-chat-1m dataset in streaming mode (size: {data_size})...")
     dataset = load_dataset("lmsys/lmsys-chat-1m", split="train", streaming=True)
     dataset = dataset.take(data_size)
     
-    # Process dataset in batches to avoid memory issues
+    # Initialize lists to store data
     all_prompts = []
+    all_lengths = []
     
-    print("Extracting prompts from conversations...")
+    print("Processing dataset in batches...")
     batch_count = 0
     current_batch = []
     
+    # Process dataset in batches to avoid memory issues
     for example in tqdm(dataset, desc="Processing examples"):
         current_batch.append(example)
         
@@ -113,32 +125,50 @@ def prepare_lmsys_dataset(data_size=100000, batch_size=1000,
             batch_count += 1
             print(f"Processing batch {batch_count}...")
             
-            # Extract prompts
+            # 1. Extract prompts from the batch
             batch_prompts = [extract_first_round_prompt(ex) for ex in current_batch]
-            all_prompts.extend(batch_prompts)
             
-            # Clear the batch
+            # 2. Generate responses and calculate lengths
+            print(f"Generating responses for batch {batch_count}...")
+            batch_lengths = generate_response_and_get_length(
+                batch_prompts, 
+                inference_model, 
+                inference_tokenizer, 
+                device, 
+                max_new_tokens=max_new_tokens,
+                batch_size=inference_batch_size
+            )
+            
+            # 3. Append to our collections
+            all_prompts.extend(batch_prompts)
+            all_lengths.extend(batch_lengths)
+            
+            # 4. Clear the batch
             current_batch = []
     
     # Process any remaining examples
     if current_batch:
+        print(f"Processing final batch...")
         batch_prompts = [extract_first_round_prompt(ex) for ex in current_batch]
+        batch_lengths = generate_response_and_get_length(
+            batch_prompts, 
+            inference_model, 
+            inference_tokenizer, 
+            device, 
+            max_new_tokens=max_new_tokens,
+            batch_size=inference_batch_size
+        )
         all_prompts.extend(batch_prompts)
+        all_lengths.extend(batch_lengths)
     
     print(f"Total examples processed: {len(all_prompts)}")
     
-    # Apply random seed before splitting
+    # Shuffle data with the specified random seed
     indices = list(range(len(all_prompts)))
-    random.seed(seed)
     random.shuffle(indices)
     
     all_prompts = [all_prompts[i] for i in indices]
-    
-    # Generate responses and get output lengths using the inference model
-    print("Generating responses to calculate output lengths...")
-    all_lengths = generate_response_and_get_length(
-        all_prompts, inference_model, inference_tokenizer, device
-    )
+    all_lengths = [all_lengths[i] for i in indices]
     
     # Split into train and validation sets
     split_idx = int(len(all_prompts) * 0.9)  # 10% validation
@@ -356,7 +386,9 @@ def main():
         seed=args.seed,
         inference_model=inference_model,
         inference_tokenizer=inference_tokenizer,
-        device=device
+        device=device,
+        max_new_tokens=args.max_new_tokens,
+        inference_batch_size=args.inference_batch_size
     )
     
     # Create datasets and data loaders
