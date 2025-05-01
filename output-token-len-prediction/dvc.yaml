@@ -41,9 +41,8 @@ stages:
       cmd: >
         python output_len_prediction.py 
         --model_name "vicuna-13b"
-        --task_type 1
+        --n_tokens ${item}
         --data_size 10
-        --add_response_token ${item}
         --seed 42
         --use_wandb
       deps:
