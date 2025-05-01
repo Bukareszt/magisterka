@@ -1,14 +1,13 @@
 stages:
   preprocess:
-    foreach:
-      token_count: ${matrix.add_response_token}
+    foreach: ${matrix.add_response_token}
     do:
       cmd: >
         python preprocess_dataset.py 
         --model_name ${model_name} 
         --task_type ${task_type} 
         --data_size ${data_size}
-        --add_response_token ${item.token_count}
+        --add_response_token ${item}
         --seed ${seed}
         ${ all_models ? '--all_models' : ''}
         ${ multi_round ? '--multi_round' : ''}
@@ -19,20 +18,19 @@ stages:
         - params.yaml:preprocess
         - params.yaml:matrix.add_response_token
       outs:
-        - ${dataset_path}_preview${item.token_count}:
+        - ${dataset_path}_preview${item}:
             cache: true
             persist: true
 
   train:
-    foreach:
-      token_count: ${matrix.add_response_token}
+    foreach: ${matrix.add_response_token}
     do:
       cmd: >
         python latency_prediction.py 
         --model_name ${model_name}
         --task_type ${task_type}
         --data_size ${data_size}
-        --add_response_token ${item.token_count}
+        --add_response_token ${item}
         ${ all_models ? '--all_models' : ''}
         ${ multi_round ? '--multi_round' : ''}
         ${ head_tail ? '--head_tail' : ''}
@@ -49,15 +47,15 @@ stages:
         - evaluate.py
         - dataloading.py
         - logger.py
-        - ${dataset_path}_preview${item.token_count}
+        - ${dataset_path}_preview${item}
       params:
         - params.yaml:train
         - params.yaml:matrix.add_response_token
       metrics:
-        - ./metrics/${output_filename}_preview${item.token_count}.txt:
+        - ./metrics/${output_filename}_preview${item}.txt:
             cache: false
       outs:
-        - ./models/${output_filename}_preview${item.token_count}.pth:
+        - ./models/${output_filename}_preview${item}.pth:
             cache: true
-        - ./results/${output_filename}_preview${item.token_count}:
+        - ./results/${output_filename}_preview${item}:
             cache: true 
