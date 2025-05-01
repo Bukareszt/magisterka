@@ -1,31 +1,55 @@
-stages:
-  preprocess:
-    foreach: [0, 1, 2, 3, 4, 5]
-    do:
-      cmd: >
-        python preprocess_dataset.py 
-        --model_name "vicuna-13b"
-        --task_type 0
-        --data_size 100
-        --add_response_token ${item}
-        --seed 42
-      deps:
-        - preprocess_dataset.py
+# Commented out original stages
+# stages:
+#   preprocess:
+#     foreach: [0, 1, 2, 3, 4, 5]
+#     do:
+#       cmd: >
+#         python preprocess_dataset.py 
+#         --model_name "vicuna-13b"
+#         --task_type 0
+#         --data_size 100
+#         --add_response_token ${item}
+#         --seed 42
+#       deps:
+#         - preprocess_dataset.py
+# 
+#   train:
+#     foreach: [0, 1, 2, 3, 4, 5]
+#     do:
+#       cmd: >
+#         python latency_prediction.py 
+#         --model_name "vicuna-13b"
+#         --task_type 0
+#         --data_size 100
+#         --add_response_token ${item}
+#         --seed 42
+#         --use_wandb
+#       deps:
+#         - latency_prediction.py
+#         - models.py
+#         - utils.py
+#         - train.py
+#         - evaluate.py
+#         - dataloading.py
+#         - logger.py
 
-  train:
-    foreach: [0, 1, 2, 3, 4, 5]
+# Pipeline for output length prediction only
+stages:
+  train_outlen:
+    foreach: [0, 2, 4, 6, 8, 10]
     do:
       cmd: >
-        python latency_prediction.py 
+        python output_len_prediction.py 
         --model_name "vicuna-13b"
-        --task_type 0
-        --data_size 100
+        --task_type 1
+        --data_size 10
         --add_response_token ${item}
         --seed 42
         --use_wandb
       deps:
-        - latency_prediction.py
+        - output_len_prediction.py
         - models.py
+        - models/vicuna-to-pretrained-bert.py
         - utils.py
         - train.py
         - evaluate.py
