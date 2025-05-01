@@ -67,7 +67,7 @@ def extract_first_round_prompt(example, vicuna_tokenizer):
     
     return prompt, output_length
 
-def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", first_round_only=False, seed=42):
+def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", first_round_only=False, seed=42, batch_size=1000):
     """
     Load and prepare the lmsys-chat-1m dataset for output length prediction
     
@@ -76,6 +76,7 @@ def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", first_round
         model_name: Name of the model to filter for
         first_round_only: Whether to use only the first round of conversation
         seed: Random seed
+        batch_size: Process this many examples at a time to save memory
         
     Returns:
         train_prompts, val_prompts, train_lengths, val_lengths
@@ -83,41 +84,71 @@ def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", first_round
     # Initialize tokenizer for measuring output lengths
     vicuna_tokenizer = AutoTokenizer.from_pretrained("lmsys/vicuna-13b-v1.3", use_fast=False)
     
-    # Load dataset
-    print(f"Loading lmsys/lmsys-chat-1m dataset (size: {data_size})...")
-    dataset = load_dataset("lmsys/lmsys-chat-1m", split="train")
-    dataset = dataset.select(range(data_size))
+    # Load dataset in streaming mode to save memory
+    print(f"Loading lmsys/lmsys-chat-1m dataset in streaming mode (size: {data_size})...")
+    dataset = load_dataset("lmsys/lmsys-chat-1m", split="train", streaming=True)
+    dataset = dataset.take(data_size)
     
-    # Filter for the specified model and shuffle the dataset
+    # Filter for the specified model
     print(f"Filtering for model: {model_name}")
     filtered_dataset = dataset.filter(lambda example: example["model"] == model_name)
-    filtered_dataset = filtered_dataset.shuffle(seed=seed)
     
-    print(f"Dataset filtered: {len(filtered_dataset)} samples")
+    # Process dataset in batches to avoid memory issues
+    all_prompts = []
+    all_lengths = []
     
     def process_example(example):
         prompt, output_len = extract_first_round_prompt(example, vicuna_tokenizer)
         return {"prompt": prompt, "output_length": output_len}
-
-    # Process the dataset
-    processed_dataset = filtered_dataset.map(process_example)
-    processed_dataset = processed_dataset.filter(lambda x: x["output_length"] > 1)
     
-    # Extract prompts and output lengths as lists
-    print("Processing conversations...")
-    prompts = processed_dataset["prompt"]
-    output_lengths = processed_dataset["output_length"]
+    print("Processing conversations in batches...")
+    batch_count = 0
+    current_batch = []
+    
+    for example in tqdm(filtered_dataset, desc="Processing examples"):
+        current_batch.append(example)
+        
+        # Process batch when it reaches the specified size
+        if len(current_batch) >= batch_size:
+            batch_count += 1
+            print(f"Processing batch {batch_count}...")
+            
+            # Process batch
+            processed_batch = [process_example(ex) for ex in current_batch]
+            
+            # Filter for valid examples (output length > 1)
+            valid_examples = [ex for ex in processed_batch if ex["output_length"] > 1]
+            
+            # Add to our collections
+            all_prompts.extend([ex["prompt"] for ex in valid_examples])
+            all_lengths.extend([ex["output_length"] for ex in valid_examples])
+            
+            # Clear the batch
+            current_batch = []
+    
+    # Process any remaining examples
+    if current_batch:
+        processed_batch = [process_example(ex) for ex in current_batch]
+        valid_examples = [ex for ex in processed_batch if ex["output_length"] > 1]
+        all_prompts.extend([ex["prompt"] for ex in valid_examples])
+        all_lengths.extend([ex["output_length"] for ex in valid_examples])
+    
+    print(f"Total examples processed: {len(all_prompts)}")
+    
+    # Apply random seed before splitting
+    indices = list(range(len(all_prompts)))
+    random.seed(seed)
+    random.shuffle(indices)
+    
+    all_prompts = [all_prompts[i] for i in indices]
+    all_lengths = [all_lengths[i] for i in indices]
     
     # Split into train and validation sets
-    train_prompts, val_prompts, train_lengths, val_lengths = train_test_split(
-        prompts, output_lengths, test_size=0.1, random_state=seed
-    )
-    
-    # Convert to lists to ensure compatibility
-    train_prompts = list(train_prompts)
-    val_prompts = list(val_prompts)
-    train_lengths = list(train_lengths) 
-    val_lengths = list(val_lengths)
+    split_idx = int(len(all_prompts) * 0.9)  # 10% validation
+    train_prompts = all_prompts[:split_idx]
+    val_prompts = all_prompts[split_idx:]
+    train_lengths = all_lengths[:split_idx]
+    val_lengths = all_lengths[split_idx:]
     
     print(f"Dataset prepared: {len(train_prompts)} training samples, {len(val_prompts)} validation samples")
     return train_prompts, val_prompts, train_lengths, val_lengths
@@ -286,6 +317,13 @@ def main():
     parser.add_argument("--use_wandb", action="store_true", help="Whether to use Weights & Biases for logging")
     parser.add_argument("--wandb_project", type=str, help="W&B project name", default="output-length-prediction")
     parser.add_argument("--log_model", action="store_true", help="Whether to log model checkpoints to W&B")
+    
+    # Add memory optimization parameters
+    parser.add_argument("--processing_batch_size", type=int, default=1000, 
+                        help="Batch size for dataset processing (memory optimization)")
+    parser.add_argument("--streaming", action="store_true", 
+                        help="Use streaming mode for dataset loading")
+    
     args = parser.parse_args()
 
     # Set random seeds
@@ -300,7 +338,8 @@ def main():
         data_size=args.data_size,
         model_name=args.model_name,
         first_round_only=args.first_round_only,
-        seed=args.seed
+        seed=args.seed,
+        batch_size=args.processing_batch_size
     )
     
     # Ensure prompts and lengths are proper lists
