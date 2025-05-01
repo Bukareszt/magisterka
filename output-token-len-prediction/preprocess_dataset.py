@@ -7,6 +7,9 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import argparse
 import os
+import random
+import numpy as np
+import torch
 
 
 def exact_multi_round_prompt(dataset):
@@ -203,7 +206,7 @@ def preprocess_dataset(dataset):
     else:
         dataset = dataset.map(replace_model_name_by_idx)
 
-    dataset = dataset.map(tokenize_function, batched=True, remove_columns=['prompt'])
+    dataset = dataset.map(tokenize_function, batched=False, remove_columns=['prompt'])
     return dataset
 
 
@@ -217,7 +220,15 @@ if __name__ == '__main__':
     parser.add_argument('--model_name', type=str, help='Name of the LLM to predict for', default='vicuna-13b')
     parser.add_argument('--add_response_token', type=int, default=0, 
                         help='Number of words from response to add to the query for tokenization')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     args = parser.parse_args()
+
+    # Set the random seed for reproducibility
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     # 0: regression; 1: binary classification; 2: multi-class classification;
     task_type = args.task_type
@@ -264,7 +275,7 @@ if __name__ == '__main__':
     dataset = dataset.select(range(selected_data_size))
     if USE_SPECIFIC_MODEL:
         dataset = dataset.filter(lambda example: example["model"] == args.model_name)
-    dataset = dataset.shuffle(seed=1)
+    dataset = dataset.shuffle(seed=args.seed)
     dataset = preprocess_dataset(dataset)
 
     percentiles = [[] for _ in range(num_models)]
