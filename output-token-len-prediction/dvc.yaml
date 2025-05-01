@@ -44,7 +44,7 @@ stages:
         --data_size 100
         --seed 42
         --use_wandb
-        --model_name "vicuna-13b"
+        --model_name "lmsys/vicuna-13b-v1.3"
       deps:
         - output_len_prediction.py
         - models.py
