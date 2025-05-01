@@ -9,9 +9,6 @@ stages:
         --data_size ${data_size}
         --add_response_token ${item}
         --seed 42
-        ${ all_models ? '--all_models' : ''}
-        ${ multi_round ? '--multi_round' : ''}
-        ${ head_tail ? '--head_tail' : ''}
       deps:
         - preprocess_dataset.py
       params:
@@ -32,14 +29,7 @@ stages:
         --data_size ${data_size}
         --add_response_token ${item}
         --seed 42
-        ${ all_models ? '--all_models' : ''}
-        ${ multi_round ? '--multi_round' : ''}
-        ${ head_tail ? '--head_tail' : ''}
-        ${ bert_tiny ? '--bert_tiny' : ''}
-        ${ l1_loss ? '--l1_loss' : ''}
-        ${ use_wandb ? '--use_wandb' : ''}
-        ${ log_model ? '--log_model' : ''}
-        --wandb_project ${wandb_project}
+        --use_wandb
       deps:
         - latency_prediction.py
         - models.py
