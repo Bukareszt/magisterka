@@ -148,125 +148,8 @@ def train(model, criterion, optimizer, train_dataloader, validation_dataloader, 
         write_loss_to_file(training_loss_list, validation_loss_list)
 
 
-def eval_classification(model, dataloader, device):
-    accuracy_metric = evaluate.load("accuracy")
-    f1_metric = evaluate.load("f1", average="macro")
-    precision_metric = evaluate.load("precision", average="macro")
-    recall_metric = evaluate.load("recall", average="macro")
-    model.eval()
-    labels = []
-    predictions = []
-    for batch in dataloader:
-        with torch.no_grad():
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            if FLAG_VICUNA_DATA_ONLY:
-                output = model(input_ids=input_ids, attention_mask=attention_mask)
-            else:
-                model_name = batch['model'].to(device)
-                output = model(input_ids=input_ids, attention_mask=attention_mask, model_name=model_name)
-            label = batch['labels'].to(device)
-
-            if TASK_TYPE != 3 and TASK_TYPE != 4:
-                prediction = torch.argmax(output, dim=-1)
-            else:
-                prediction = torch.round(output).type(torch.LongTensor)
-                for i in range(len(prediction)):
-                    if prediction[i] >= num_classes:
-                        prediction[i] = num_classes - 1
-                    elif prediction[i] < 0:
-                        prediction[i] = 0
-            labels.extend(label)
-            predictions.extend(prediction)
-    metric = accuracy_metric.compute(references=labels, predictions=predictions) | \
-        f1_metric.compute(references=labels, predictions=predictions, average='macro') | \
-        precision_metric.compute(references=labels, predictions=predictions, average='macro') | \
-        recall_metric.compute(references=labels, predictions=predictions, average='macro')
-    return metric
 
 
-def eval_regression(model, dataloader, device):
-    l1loss = nn.L1Loss()
-    mseloss = nn.MSELoss()
-    model.eval()
-
-    l1err = 0
-    mse = 0
-    with torch.no_grad():
-        for batch in dataloader:
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            if FLAG_VICUNA_DATA_ONLY:
-                prediction = model(input_ids=input_ids, attention_mask=attention_mask)
-            else:
-                model_name = batch['model'].to(device)
-                prediction = model(input_ids=input_ids, attention_mask=attention_mask, model_name=model_name)
-            if TASK_TYPE == 0:
-                labels = batch['num_tokens'].to(device)
-            else:
-                labels = batch['labels'].to(device)
-            l1err += l1loss(prediction, labels.type_as(prediction))
-            mse += mseloss(prediction, labels.type_as(prediction))
-
-    metric = {'L1 error': l1err.item() / len(dataloader), 'MSE': mse.item() / len(dataloader)}
-    return metric
-
-
-def eval_all_models(model, testset, device):
-    accuracy_metric = evaluate.load("accuracy")
-    f1_metric = evaluate.load("f1", average="macro")
-    precision_metric = evaluate.load("precision", average="macro")
-    recall_metric = evaluate.load("recall", average="macro")
-    l1loss = nn.L1Loss()
-    mseloss = nn.MSELoss()
-    model.eval()
-    data_collator = DataCollatorWithPadding(tokenizer=bert_tokenizer)
-    metrics = []
-
-    for i in range(len(model_names)):
-        data_subset = testset.filter(lambda example: example["model"][i] == 1)
-        model_counts[i] = len(data_subset['model'])
-        if len(data_subset['model']) == 0:
-            metrics.append({})
-            continue
-        dataloader = DataLoader(data_subset, shuffle=True, batch_size=test_batch_size, collate_fn=data_collator)
-        predictions = []
-        labels = []
-        l1err = 0.0
-        mse = 0.0
-
-        for batch in dataloader:
-            with torch.no_grad():
-                input_ids = batch['input_ids'].to(device)
-                attention_mask = batch['attention_mask'].to(device)
-                model_name = batch['model'].to(device)
-                output = model(input_ids=input_ids, attention_mask=attention_mask, model_name=model_name)
-                label = batch['labels'].to(device)
-
-                if TASK_TYPE != 3 and TASK_TYPE != 4:
-                    prediction = torch.argmax(output, dim=-1)
-                else:
-                    prediction = torch.round(output).type(torch.LongTensor)
-                    l1err += l1loss(output, label.type_as(output))
-                    mse += mseloss(output, label.type_as(output))
-                    for i in range(len(prediction)):
-                        if prediction[i] >= num_classes:
-                            prediction[i] = num_classes - 1
-                        elif prediction[i] < 0:
-                            prediction[i] = 0
-                labels.extend(label)
-                predictions.extend(prediction)
-        reg_metric = {'L1 error': l1err.item() / len(dataloader), 'MSE': mse.item() / len(dataloader)}
-        metric = accuracy_metric.compute(references=labels, predictions=predictions) | \
-            f1_metric.compute(references=labels, predictions=predictions, average='macro') | \
-            precision_metric.compute(references=labels, predictions=predictions, average='macro') | \
-            recall_metric.compute(references=labels, predictions=predictions, average='macro') | \
-            reg_metric
-        metrics.append(metric)
-    return metrics
-
-
-def predict(model, dataloader, device):
     model.eval()
     predicted_labels = []
     actual_lengths = []
@@ -309,7 +192,6 @@ def predict(model, dataloader, device):
     else:
         df = pd.DataFrame({'actual_length': actual_lengths, 'predicted_label': predicted_labels, 'latency': latencies, 'turn_id': turn_ids, 'model_name': print_model_names})
     return df
-
 
 if __name__ == '__main__':
     dataset_name = 'lmsys/lmsys-chat-1m'

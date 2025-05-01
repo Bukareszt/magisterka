@@ -209,3 +209,41 @@ def plot_model_metrics(metrics, model_names, model_counts):
     plt.xticks(rotation=45)
     fig = ax.get_figure()
     fig.savefig("./results/cls_all_models.pdf") 
+
+def eval_regression(model, dataloader, device, flag_vicuna_data_only=False):
+    """
+    Evaluate regression model.
+    
+    Args:
+        model: Model to evaluate.
+        dataloader: DataLoader for evaluation data.
+        device: Device to evaluate on.
+        flag_vicuna_data_only: Whether using only vicuna data.
+        
+    Returns:
+        Dictionary of evaluation metrics.
+    """
+    l1loss = nn.L1Loss()
+    mseloss = nn.MSELoss()
+    model.eval()
+
+    l1err = 0
+    mse = 0
+    with torch.no_grad():
+        for batch in dataloader:
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            if flag_vicuna_data_only:
+                prediction = model(input_ids=input_ids, attention_mask=attention_mask)
+            else:
+                model_name = batch['model'].to(device)
+                prediction = model(input_ids=input_ids, attention_mask=attention_mask, model_name=model_name)
+            if 'num_tokens' in batch:
+                labels = batch['num_tokens'].to(device)
+            else:
+                labels = batch['labels'].to(device)
+            l1err += l1loss(prediction, labels.type_as(prediction))
+            mse += mseloss(prediction, labels.type_as(prediction))
+
+    metric = {'L1 error': l1err.item() / len(dataloader), 'MSE': mse.item() / len(dataloader)}
+    return metric 
