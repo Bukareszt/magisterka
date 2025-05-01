@@ -23,7 +23,7 @@ from models import BertClassificationModel, BertRegressionModel
 from dataloading import generate_dataloaders
 from train import train, write_loss_to_file, eval_classification, eval_regression
 from evaluate import predict, eval_all_models, plot_model_metrics
-from utils import get_output_file_name, get_dataset_path
+from utils import get_output_file_name, get_dataset_path, extract_preview_tokens_from_dataset_path
 from logger import Logger
 
 if __name__ == '__main__':
@@ -151,6 +151,9 @@ if __name__ == '__main__':
 
     # Initialize the logger if W&B is enabled
     if args.use_wandb:
+        # Extract preview tokens from dataset path
+        add_response_tokens = extract_preview_tokens_from_dataset_path(dataset_path)
+        
         config = {
             'task_type': TASK_TYPE,
             'vicuna_data_only': FLAG_VICUNA_DATA_ONLY,
@@ -163,6 +166,8 @@ if __name__ == '__main__':
             'num_epochs': num_epochs,
             'batch_size': train_batch_size,
             'learning_rate': lr,
+            'add_response_tokens': add_response_tokens,  # Use the extracted value
+            'dataset_path': dataset_path,
         }
         logger = Logger(
             config=config,
