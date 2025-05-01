@@ -10,8 +10,7 @@ from datasets import load_dataset, Dataset
 import argparse
 import random
 from logger import Logger  # Import the Logger class
-
-from models.vicuna_to_pretrained_bert import VicunaToBertRegressor
+from vicuna_bert import VicunaToBertRegressor
 
 class OutputLengthDataset(Dataset):
     def __init__(self, prompts, output_lengths):

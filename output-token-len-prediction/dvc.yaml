@@ -49,7 +49,7 @@ stages:
       deps:
         - output_len_prediction.py
         - models.py
-        - models/vicuna-to-pretrained-bert.py
+        - models/vicuna_bert.py
         - utils.py
         - train.py
         - evaluate.py
