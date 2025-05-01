@@ -25,8 +25,7 @@ class VicunaToBertRegressor(nn.Module):
         self.vicuna = AutoModelForCausalLM.from_pretrained(
             vicuna_name,
             trust_remote_code=True,
-            device_map="auto",
-            trust_remote_code=True
+            device_map="auto"
         )
         for param in self.vicuna.parameters():
             param.requires_grad = False
