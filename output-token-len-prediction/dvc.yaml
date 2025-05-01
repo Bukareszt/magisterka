@@ -33,8 +33,29 @@
 #         - dataloading.py
 #         - logger.py
 
-# Pipeline for output length prediction only
+# Remote storage configuration
+remote:
+  gsremote:
+    url: gdrive://1LNKOK4haQijL3ZXXeX4CRvyWCo0Mo7hw/
+
+
+# Pipeline for output length prediction with separate data generation
 stages:
+  generate_outlen_data:
+    cmd: >
+      python generate_output_len_data.py
+      --data_size 10000
+      --processing_batch_size 32
+      --seed 42
+      --inference_model "microsoft/phi-1.5"
+      --max_new_tokens 512
+      --output_dir "./data"
+    deps:
+      - generate_output_len_data.py
+    outs:
+      - data/output_len_train_10000_42.json
+      - data/output_len_val_10000_42.json
+
   train_outlen:
     foreach: [2, 4, 6, 8, 10]
     do:
@@ -45,12 +66,10 @@ stages:
         --seed 42
         --use_wandb
         --model_name "microsoft/phi-1.5"
-        --inference_model "microsoft/phi-1.5"
+        --data_dir "./data"
       deps:
         - output_len_prediction.py
-        - models.py
-        - utils.py
-        - train.py
-        - evaluate.py
-        - dataloading.py
+        - vicuna_bert.py
         - logger.py
+        - data/output_len_train_10000_42.json
+        - data/output_len_val_10000_42.json
