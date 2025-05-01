@@ -39,8 +39,15 @@ def exact_multi_round_prompt(dataset):
                 if len(encoded_response['input_ids']) <= 1 or len(encoded_response['input_ids']) >= 512:
                     break
 
+                prompt_with_preview = dialogue_so_far
+                # Add specified number of words from the response if requested
+                if ADD_RESPONSE_TOKENS > 0:
+                    response_words = assistant_content.split()
+                    preview_words = ' '.join(response_words[:min(ADD_RESPONSE_TOKENS, len(response_words))])
+                    prompt_with_preview += preview_words + '\n'
+
                 # Add a new prediction sample
-                new_samples['prompt'].append(dialogue_so_far)
+                new_samples['prompt'].append(prompt_with_preview)
                 new_samples['conversation_id'].append(conversation_id)
                 new_samples['model'].append(sample['model'])
                 new_samples['turn_id'].append(i // 2)
@@ -86,7 +93,14 @@ def extract_first_round_prompt(example):
         else:
             break
 
-    example['prompt'] = user_content
+    # Add specified number of words from the response without marker
+    if ADD_RESPONSE_TOKENS > 0 and assistant_content:
+        response_words = assistant_content.split()
+        preview_words = ' '.join(response_words[:min(ADD_RESPONSE_TOKENS, len(response_words))])
+        example['prompt'] = user_content + '\n' + preview_words
+    else:
+        example['prompt'] = user_content
+        
     encoded_response = vicuna_tokenizer(assistant_content, truncation=False)
     example['num_tokens'] = len(encoded_response['input_ids'])
     if task_type == 0:
@@ -202,6 +216,8 @@ if __name__ == '__main__':
     parser.add_argument('--task_type', type=int, help='0 for regression, 1 for binary cls, 2 for multi-cls', default=2)
     parser.add_argument('--data_size', type=int, help='Size of the dataset to use (in thousands)', default=1000)
     parser.add_argument('--model_name', type=str, help='Name of the LLM to predict for', default='vicuna-13b')
+    parser.add_argument('--add_response_token', type=int, default=0, 
+                        help='Number of words from response to add to the query for tokenization')
     args = parser.parse_args()
 
     # 0: regression; 1: binary classification; 2: multi-class classification;
@@ -209,6 +225,7 @@ if __name__ == '__main__':
     FLAG_VICUNA_DATA_ONLY = not args.all_models
     FLAG_FIRST_ROUND_ONLY = not args.multi_round
     FLAG_HEAD_TAIL = args.head_tail
+    ADD_RESPONSE_TOKENS = args.add_response_token
     # cls_threshold = 328
     if task_type == 1:
         multi_cls_thresholds = [141, 503, 1000000]

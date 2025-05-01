@@ -19,113 +19,12 @@ import os
 import numpy as np
 from datetime import datetime
 import time
-
-
-class BertClassificationModel(nn.Module):
-    def __init__(self, config, model_name, hidden_dim, num_classes):
-        super().__init__()
-        self.config = config
-        self.bert = BertModel.from_pretrained(model_name)
-        # Fix the weights of the pretrained model
-        if not FLAG_BERT_TUNING:
-            for param in self.bert.parameters():
-                param.requires_grad = False
-
-        # The output layer that takes the [CLS] representation and gives an output
-        self.cls = nn.Linear(config.hidden_size, hidden_dim)
-        self.relu = nn.ReLU()
-        if FLAG_VICUNA_DATA_ONLY:
-            self.fc1 = nn.Linear(hidden_dim, hidden_dim)
-        else:
-            self.fc1 = nn.Linear(hidden_dim + num_models, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, num_classes)
-        self.logsoftmax = nn.LogSoftmax(dim=-1)
-
-    def forward(self, input_ids, attention_mask, model_name=None):
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        # Obtain the representations of [CLS] heads
-        # outputs.last_hidden_state: [batch_size, sequence_size, hidden_size]
-        logits = outputs.last_hidden_state[:,0,:]
-        output = self.relu(self.cls(logits))
-        if FLAG_VICUNA_DATA_ONLY:
-            output = self.relu(self.fc1(output))
-        else:
-            output = self.relu(self.fc1(torch.cat((output, model_name), dim=-1)))
-        output = self.logsoftmax(self.fc2(output))
-        return output
-    
-
-class BertRegressionModel(nn.Module):
-    def __init__(self, config, model_name, hidden_dim):
-        super().__init__()
-        self.config = config
-        self.bert = BertModel.from_pretrained(model_name)
-        # Fix the weights of the pretrained model
-        if not FLAG_BERT_TUNING:
-            for param in self.bert.parameters():
-                param.requires_grad = False
-
-        # The output layer that takes the [CLS] representation and gives an output
-        self.cls = nn.Linear(config.hidden_size, hidden_dim)
-        self.relu = nn.ReLU()
-        if FLAG_VICUNA_DATA_ONLY:
-            self.fc1 = nn.Linear(hidden_dim, hidden_dim)
-        else:
-            self.fc1 = nn.Linear(hidden_dim + num_models, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, 1)
-
-    def forward(self, input_ids, attention_mask, model_name=None):
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        # Obtain the representations of [CLS] heads
-        # outputs.last_hidden_state: [batch_size, sequence_size, hidden_size]
-        logits = outputs.last_hidden_state[:,0,:]
-        output = self.relu(self.cls(logits))
-        if FLAG_VICUNA_DATA_ONLY:
-            output = self.relu(self.fc1(output))
-        else:
-            output = self.relu(self.fc1(torch.cat((output, model_name), dim=-1)))
-        output = self.fc2(output).squeeze(-1)
-        return output
-
-
-def generate_dataloaders(dataset, train_batch_size, test_batch_size, tokenizer):
-    n_total_samples = len(dataset)
-    if FLAG_FIRST_ROUND_ONLY:
-        train_validationtest = dataset.train_test_split(test_size=0.4, shuffle=False)
-        validation_test = train_validationtest['test'].train_test_split(test_size=0.5, shuffle=False)
-        train_dataset = train_validationtest['train']
-        validation_dataset = validation_test['train']
-        test_dataset = validation_test['test']
-    else:
-        sep_train_val = int(n_total_samples * 0.6)
-        sep_val_test = int(n_total_samples * 0.8)
-        # Make sure that sentences from the same conversation would not appear across train/val/test:
-        while sep_train_val < sep_val_test and abs(dataset[sep_train_val]['conversation_id'] - dataset[sep_train_val - 1]['conversation_id']) < 0.1:
-            sep_train_val += 1
-        while sep_val_test < n_total_samples and abs(dataset[sep_val_test]['conversation_id'] - dataset[sep_val_test - 1]['conversation_id']) < 0.1:
-            sep_val_test += 1
-        print('Total training samples: ', sep_train_val)
-        print('Total validation samples: ', sep_val_test - sep_train_val)
-        print('Total test samples: ', n_total_samples - sep_val_test)
-
-        train_dataset = dataset.select(range(sep_train_val))
-        validation_dataset = dataset.select(range(sep_train_val, sep_val_test))
-        test_dataset = dataset.select(range(sep_val_test, n_total_samples))
-        train_dataset = train_dataset.shuffle(seed=1)
-
-    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
-    train_dataloader = DataLoader(train_dataset, shuffle=False, batch_size=train_batch_size, collate_fn=data_collator)
-    validation_dataloader = DataLoader(validation_dataset, shuffle=True, batch_size=train_batch_size, collate_fn=data_collator)
-    weights = []
-    if TASK_TYPE == 1 or TASK_TYPE == 2:
-        for i in range(num_classes):
-            n_samples_for_label_i = len(dataset.filter(lambda example: example["labels"] == i)['labels'])
-            print('Number of samples for class ' + str(i) + ': ' + str(n_samples_for_label_i))
-            if n_samples_for_label_i == 0:
-                weights.append(0.0)
-            else:
-                weights.append(1.0 / n_samples_for_label_i)
-    return train_dataloader, validation_dataloader, test_dataset, weights
+from models import BertClassificationModel, BertRegressionModel
+from dataloading import generate_dataloaders
+from train import train, write_loss_to_file, eval_classification, eval_regression
+from evaluate import predict, eval_all_models, plot_model_metrics
+from utils import get_output_file_name, get_dataset_path
+from logger import Logger
 
 
 def write_loss_to_file(training_loss_list, validation_loss_list):
@@ -144,7 +43,9 @@ def write_loss_to_file(training_loss_list, validation_loss_list):
         f.write('\n')
 
 
-def train(model, criterion, optimizer, train_dataloader, validation_dataloader, num_epochs, device):
+def train(model, criterion, optimizer, train_dataloader, validation_dataloader, num_epochs, device, 
+          flag_bert_tuning=True, flag_vicuna_data_only=False, task_type=0, flag_write_results=False, 
+          selected_data_size=1000, logger=None):
     num_training_steps = num_epochs * len(train_dataloader)
     # Using a learning rate with a linear decay
     lr_scheduler = transformers.get_scheduler(
@@ -157,32 +58,49 @@ def train(model, criterion, optimizer, train_dataloader, validation_dataloader, 
 
     training_loss_list = []
     validation_loss_list = []
-    if FLAG_WRITE_RESULTS:
+    if flag_write_results:
         writer = SummaryWriter()
+
+    # Log hyperparameters if logger is available
+    if logger:
+        hyperparams = {
+            "learning_rate": optimizer.param_groups[0]['lr'],
+            "batch_size": train_dataloader.batch_size if hasattr(train_dataloader, 'batch_size') else None,
+            "epochs": num_epochs,
+            "bert_tuning": flag_bert_tuning,
+            "vicuna_data_only": flag_vicuna_data_only,
+            "task_type": task_type,
+            "dataset_size": selected_data_size,
+            "model_type": model.__class__.__name__,
+            "criterion": criterion.__class__.__name__
+        }
+        logger.log_hyperparams(hyperparams)
 
     for epoch in tqdm(range(num_epochs)):
         training_loss = 0
         model.train()
         # Fix the BERT weights after 3 training epochs
-        if FLAG_BERT_TUNING and epoch == 3:
+        if flag_bert_tuning and epoch == 3:
             for param in model.bert.parameters():
                 param.requires_grad = False
             for param_group in optimizer.param_groups:
                 param_group['lr'] = 1e-4
+            if logger:
+                logger.log_metrics({"learning_rate": 1e-4}, step=epoch)
 
         for batch in train_dataloader:
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
-            if FLAG_VICUNA_DATA_ONLY:
+            if flag_vicuna_data_only:
                 output = model(input_ids=input_ids, attention_mask=attention_mask)
             else:
                 model_name = batch['model'].to(device)
                 output = model(input_ids=input_ids, attention_mask=attention_mask, model_name=model_name)
-            if TASK_TYPE == 0:
+            if task_type == 0:
                 labels = batch['num_tokens'].to(device)
             else:
                 labels = batch['labels'].to(device)
-            if TASK_TYPE == 0 or TASK_TYPE == 3 or TASK_TYPE == 4:
+            if task_type == 0 or task_type == 3 or task_type == 4:
                 loss = criterion(output, labels.float())
             else:
                 loss = criterion(output, labels)
@@ -194,23 +112,37 @@ def train(model, criterion, optimizer, train_dataloader, validation_dataloader, 
             lr_scheduler.step()
             training_loss += loss.item()
 
-        if FLAG_WRITE_RESULTS:
-            writer.add_scalar("Loss/train", training_loss / len(train_dataloader), epoch)
-        print(f"Training loss for epoch {epoch}: {training_loss / len(train_dataloader)}")
-        training_loss_list.append(training_loss / len(train_dataloader))
+        epoch_train_loss = training_loss / len(train_dataloader)
+        
+        if flag_write_results:
+            writer.add_scalar("Loss/train", epoch_train_loss, epoch)
+        
+        print(f"Training loss for epoch {epoch}: {epoch_train_loss}")
+        training_loss_list.append(epoch_train_loss)
+        
         if epoch % 1 == 0:
-            if TASK_TYPE == 0:
-                validation_metrics = eval_regression(model, validation_dataloader, device)
-            elif TASK_TYPE == 3 or TASK_TYPE == 4:
-                validation_metrics = eval_regression(model, validation_dataloader, device)
-                validation_metrics = validation_metrics | eval_classification(model, validation_dataloader, device)
+            if task_type == 0:
+                validation_metrics = eval_regression(model, validation_dataloader, device, flag_vicuna_data_only)
+            elif task_type == 3 or task_type == 4:
+                validation_metrics = eval_regression(model, validation_dataloader, device, flag_vicuna_data_only)
+                validation_metrics = validation_metrics | eval_classification(model, validation_dataloader, device, flag_vicuna_data_only)
             else:
-                validation_metrics = eval_classification(model, validation_dataloader, device)
+                validation_metrics = eval_classification(model, validation_dataloader, device, flag_vicuna_data_only)
+            
+            # Log the metrics if logger is available
+            if logger:
+                metrics_to_log = {
+                    "train/loss": epoch_train_loss,
+                    **{f"val/{k}": v for k, v in validation_metrics.items()}
+                }
+                logger.log_metrics(metrics_to_log, step=epoch)
+            
             print(f'Validation loss after epoch {epoch}: ')
             for k, v in validation_metrics.items():
                 print(f'{k}: {v:.4f}', end='\t')
             print(' ')
-    if FLAG_WRITE_RESULTS:
+            
+    if flag_write_results:
         writer.flush()
         writer.close()
         write_loss_to_file(training_loss_list, validation_loss_list)
@@ -379,56 +311,6 @@ def predict(model, dataloader, device):
     return df
 
 
-def get_output_file_name():
-    output_filename = 'predictions_'
-    if not FLAG_FIRST_ROUND_ONLY:
-        if FLAG_HEAD_TAIL:
-            output_filename += 'multiround_headtail_'
-        else:
-            output_filename += 'multiround_tail_'
-    if not FLAG_VICUNA_DATA_ONLY:
-        output_filename += 'all_models_'
-    else:
-        output_filename += args.model_name.lower() + '_'
-    if FLAG_BERT_TUNING:
-        output_filename += 'warmup_'
-    if FLAG_TINY_BERT:
-        output_filename += 'berttiny_'
-    if TASK_TYPE == 0:
-        output_filename += 'reg_'
-        output_filename += 'l1_' if FLAG_L1_LOSS else 'mse_'
-    elif TASK_TYPE == 1:
-        output_filename += 'cls_'
-    elif TASK_TYPE == 2:
-        output_filename += 'multi_cls_'
-    elif TASK_TYPE == 3:
-        output_filename += 'ordinal_multi_cls_'
-        output_filename += 'l1_' if FLAG_L1_LOSS else 'mse_'
-    elif TASK_TYPE == 4:
-        output_filename += 'ordinal_cls_'
-        output_filename += 'l1_' if FLAG_L1_LOSS else 'mse_'
-    output_filename += f'{int(selected_data_size / 1000)}K.csv'
-    return output_filename
-
-
-def get_dataset_path():
-    model_name = args.model_name.lower()+'_' if FLAG_VICUNA_DATA_ONLY else ''
-    if FLAG_FIRST_ROUND_ONLY:
-        first_round = 'first_round_data_'
-    elif FLAG_HEAD_TAIL:
-        first_round = 'headtail_'
-    else:
-        first_round = 'tail_'
-    if TASK_TYPE == 0:
-        dataset_path = 'data/lmsys_' + first_round + model_name + f'{int(selected_data_size / 1000)}K'
-    elif TASK_TYPE == 1 or TASK_TYPE == 4:
-        dataset_path = 'data/lmsys_' + first_round + model_name + f'cls_{int(selected_data_size / 1000)}K'
-    elif TASK_TYPE == 2 or TASK_TYPE == 3:
-        # multi_cls or ordinal_cls:
-        dataset_path = 'data/lmsys_' + first_round + model_name + f'multi_cls_{int(selected_data_size / 1000)}K'
-    return dataset_path
-
-
 if __name__ == '__main__':
     dataset_name = 'lmsys/lmsys-chat-1m'
 
@@ -443,6 +325,9 @@ if __name__ == '__main__':
     parser.add_argument('--model_name', type=str, help='Name of the LLM to predict for', default='vicuna-13b')
     parser.add_argument('--customized', action='store_true', help='Whether to use customized dataset', default=False)
     parser.add_argument('--dataset_path', type=str, help='Path to customized dataset', default='data/customized_1K')
+    parser.add_argument('--use_wandb', action='store_true', help='Whether to use Weights & Biases for logging', default=False)
+    parser.add_argument('--wandb_project', type=str, help='W&B project name', default='latency-prediction')
+    parser.add_argument('--log_model', action='store_true', help='Whether to log model checkpoints to W&B', default=False)
     args = parser.parse_args()
 
     # 0: regression; 1: binary classification; 2: multi-class classification; 
@@ -478,24 +363,50 @@ if __name__ == '__main__':
     bert_tokenizer = AutoTokenizer.from_pretrained(model_name)
     bert_tokenizer.deprecation_warnings["Asking-to-pad-a-fast-tokenizer"] = True
 
-    output_filename = get_output_file_name()
-    dataset_path = get_dataset_path()
-    if args.customized:
-        # override the dataset path if using customized dataset instead of LMSYS dataset
-        dataset_path = args.dataset_path
+    output_filename = get_output_file_name(
+        flag_first_round_only=FLAG_FIRST_ROUND_ONLY,
+        flag_vicuna_data_only=FLAG_VICUNA_DATA_ONLY,
+        flag_bert_tuning=FLAG_BERT_TUNING,
+        flag_tiny_bert=FLAG_TINY_BERT,
+        task_type=TASK_TYPE,
+        flag_l1_loss=FLAG_L1_LOSS,
+        selected_data_size=selected_data_size,
+        model_name=args.model_name,
+        flag_head_tail=FLAG_HEAD_TAIL
+    )
+    
+    dataset_path = get_dataset_path(
+        flag_first_round_only=FLAG_FIRST_ROUND_ONLY,
+        flag_vicuna_data_only=FLAG_VICUNA_DATA_ONLY,
+        task_type=TASK_TYPE,
+        selected_data_size=selected_data_size,
+        model_name=args.model_name,
+        flag_head_tail=FLAG_HEAD_TAIL,
+        customized_path=args.dataset_path if args.customized else None
+    )
 
     num_epochs = 6
     train_batch_size = 16
     test_batch_size = 1
     lr = 1e-5 if FLAG_BERT_TUNING else 1e-4
 
-    dataset = datasets.load_from_disk(dataset_path)
-    print(f'Loaded dataset from ' + dataset_path)
-    print(len(dataset))
-    # print(dataset.column_names)
-    # print(dataset[0])
-
-    train_dataloader, validation_dataloader, test_dataset, weights = generate_dataloaders(dataset, train_batch_size, test_batch_size, bert_tokenizer)
+    # Load dataset with streaming mode for memory efficiency
+    print(f'Loading dataset from {dataset_path}...')
+    dataset = datasets.load_from_disk(
+        dataset_path,
+        keep_in_memory=False  # Don't keep whole dataset in memory
+    )
+    print(f'Dataset loaded: {len(dataset)} samples')
+    
+    train_dataloader, validation_dataloader, test_dataset, weights = generate_dataloaders(
+        dataset, 
+        train_batch_size, 
+        test_batch_size, 
+        bert_tokenizer,
+        flag_first_round_only=FLAG_FIRST_ROUND_ONLY,
+        task_type=TASK_TYPE,
+        num_classes=num_classes
+    )
     data_collator = DataCollatorWithPadding(tokenizer=bert_tokenizer)
     test_dataloader = DataLoader(test_dataset, shuffle=False, batch_size=test_batch_size, collate_fn=data_collator)
     config = AutoConfig.from_pretrained(model_name)
@@ -505,63 +416,107 @@ if __name__ == '__main__':
 
     # regression or ordinal classification
     if TASK_TYPE == 0 or TASK_TYPE == 3 or TASK_TYPE == 4:
-        model = BertRegressionModel(config, model_name, hidden_dim=128).to(device)
+        model = BertRegressionModel(config, model_name, hidden_dim=128, 
+                                    flag_bert_tuning=FLAG_BERT_TUNING, 
+                                    flag_vicuna_data_only=FLAG_VICUNA_DATA_ONLY, 
+                                    num_models=num_models).to(device)
         if FLAG_L1_LOSS:
             criterion = nn.L1Loss()
         else:
             criterion = nn.MSELoss()
     # classification
     elif TASK_TYPE == 1 or TASK_TYPE == 2:
-        model = BertClassificationModel(config, model_name, hidden_dim=128, num_classes=num_classes).to(device)
+        model = BertClassificationModel(config, model_name, hidden_dim=128, num_classes=num_classes, 
+                                        flag_bert_tuning=FLAG_BERT_TUNING, 
+                                        flag_vicuna_data_only=FLAG_VICUNA_DATA_ONLY, 
+                                        num_models=num_models).to(device)
         # criterion = nn.NLLLoss()
         criterion = nn.NLLLoss(weight=torch.tensor(weights).to(device))
     optimizer = torch.optim.AdamW(params=model.parameters(), lr=lr)
+
+    # Initialize the logger if W&B is enabled
+    if args.use_wandb:
+        config = {
+            'task_type': TASK_TYPE,
+            'vicuna_data_only': FLAG_VICUNA_DATA_ONLY,
+            'first_round_only': FLAG_FIRST_ROUND_ONLY,
+            'head_tail': FLAG_HEAD_TAIL,
+            'bert_tuning': FLAG_BERT_TUNING,
+            'tiny_bert': FLAG_TINY_BERT,
+            'l1_loss': FLAG_L1_LOSS,
+            'data_size': selected_data_size,
+            'num_epochs': num_epochs,
+            'batch_size': train_batch_size,
+            'learning_rate': lr,
+        }
+        logger = Logger(
+            config=config,
+            model_name=args.model_name,
+            project_name=args.wandb_project,
+            enable_logging=True,
+            log_model=args.log_model
+        )
+    else:
+        logger = None
 
     if FLAG_LOAD_MODEL_WEIGHTS:
         model.load_state_dict(torch.load('./models/' + output_filename.split('.')[0] + '.pth'))
         model.to(device)
         print("Loaded model weights from disk.")
     else:
-        # Training
+        # Training with logger
         print("Start training...")
         train(model, 
-            criterion, 
-            optimizer, 
-            train_dataloader, 
-            validation_dataloader, 
-            num_epochs, 
-            device)
+              criterion, 
+              optimizer, 
+              train_dataloader, 
+              validation_dataloader, 
+              num_epochs, 
+              device,
+              flag_bert_tuning=FLAG_BERT_TUNING,
+              flag_vicuna_data_only=FLAG_VICUNA_DATA_ONLY,
+              task_type=TASK_TYPE,
+              flag_write_results=FLAG_WRITE_RESULTS,
+              selected_data_size=selected_data_size,
+              logger=logger)
 
     if TASK_TYPE == 0:
-        validation_metrics = eval_regression(model, validation_dataloader, device)
+        validation_metrics = eval_regression(model, validation_dataloader, device, FLAG_VICUNA_DATA_ONLY)
     elif TASK_TYPE == 3 or TASK_TYPE == 4:
-        validation_metrics = eval_regression(model, validation_dataloader, device)
-        validation_metrics = validation_metrics | eval_classification(model, validation_dataloader, device)
+        validation_metrics = eval_regression(model, validation_dataloader, device, FLAG_VICUNA_DATA_ONLY)
+        validation_metrics = validation_metrics | eval_classification(model, validation_dataloader, device, FLAG_VICUNA_DATA_ONLY)
     else:
-        validation_metrics = eval_classification(model, validation_dataloader, device)
+        validation_metrics = eval_classification(model, validation_dataloader, device, FLAG_VICUNA_DATA_ONLY)
     print(f'Validation metrics after training:')
     for k, v in validation_metrics.items():
         print(f'{k}: {v:.4f}')
 
-    if FLAG_SAVE_MODEL_WEIGHTS:
-        os.makedirs('./models', exist_ok=True)
-        torch.save(model.state_dict(), './models/' + output_filename.split('.')[0] + '.pth')
+    # Log model checkpoint if W&B is enabled
+    if FLAG_SAVE_MODEL_WEIGHTS and logger:
+        model_path = './models/' + output_filename.split('.')[0] + '.pth'
+        logger.log_model_checkpoint(model, model_path)
+    
+    # Log final evaluation metrics if W&B is enabled
+    if logger and validation_metrics:
+        logger.log_metrics(validation_metrics, prefix="final")
 
     # Inference
     print("Start inference...")
-    df = predict(model, test_dataloader, device)
+    df = predict(model, test_dataloader, device, 
+                FLAG_VICUNA_DATA_ONLY, FLAG_FIRST_ROUND_ONLY, 
+                TASK_TYPE, model_names)
     os.makedirs('./results', exist_ok=True)
     df.to_csv('./results/' + output_filename)
     print('Saved results to ./results/' + output_filename)
 
     if FLAG_VICUNA_DATA_ONLY:
         if TASK_TYPE == 0:
-            validation_metrics = eval_regression(model, test_dataloader, device)
+            validation_metrics = eval_regression(model, test_dataloader, device, FLAG_VICUNA_DATA_ONLY)
         elif TASK_TYPE == 3 or TASK_TYPE == 4:
-            validation_metrics = eval_regression(model, test_dataloader, device)
-            validation_metrics = validation_metrics | eval_classification(model, test_dataloader, device)
+            validation_metrics = eval_regression(model, test_dataloader, device, FLAG_VICUNA_DATA_ONLY)
+            validation_metrics = validation_metrics | eval_classification(model, test_dataloader, device, FLAG_VICUNA_DATA_ONLY)
         else:
-            validation_metrics = eval_classification(model, test_dataloader, device)
+            validation_metrics = eval_classification(model, test_dataloader, device, FLAG_VICUNA_DATA_ONLY)
         print(f'Metrics on test set:')
         os.makedirs('./metrics', exist_ok=True)
         with open('./metrics/' + output_filename.split('.')[0] + '.txt', 'a') as f:
@@ -570,33 +525,11 @@ if __name__ == '__main__':
                 print(f'{k}: {v:.4f}')
     else:
         if TASK_TYPE == 3 or TASK_TYPE == 4:
-            model_counts = [0 for _ in range(len(model_names))]
-            metrics = eval_all_models(model, test_dataset, device)
+            metrics, model_counts = eval_all_models(model, test_dataset, device, 
+                                                   model_names, num_classes, TASK_TYPE)
             print(model_counts)
-    
-            remaining_model_names = []
-            for i in range(len(model_names)):
-                if model_counts[i] > 0:
-                    remaining_model_names.append(model_names[i])
-            metrics_data = [[] for _ in range(4)]
+            plot_model_metrics(metrics, model_names, model_counts)
 
-            for i in range(len(model_names)):
-                if model_counts[i] == 0:
-                    continue
-                for j, (k, v) in enumerate(metrics[i].items()):
-                    if j >= 4:
-                        break
-                    metrics_data[j].append(v)
-
-            df = pd.DataFrame({ 
-                'Model Name': remaining_model_names,
-                'Accuracy': metrics_data[0], 
-                'F1 Score': metrics_data[1],
-                'Precision': metrics_data[2],
-                'Recall': metrics_data[3]
-            }) 
-            df.to_csv('./results/cls_all_models_metrics.csv', index=False) 
-            ax = df.plot(x="Model Name", y=["Accuracy", "F1 Score", "Precision", "Recall"], kind="bar", figsize=(20, 10)) 
-            plt.xticks(rotation=45)
-            fig = ax.get_figure()
-            fig.savefig("./results/cls_all_models.pdf")
+    # Finish the logger
+    if logger:
+        logger.finish()
