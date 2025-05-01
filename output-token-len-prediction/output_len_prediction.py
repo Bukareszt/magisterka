@@ -48,6 +48,7 @@ def generate_response_and_get_length(prompts, model, tokenizer, device, max_new_
             outputs = model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
+                max_new_tokens=max_new_tokens,
                 do_sample=False,  # Use greedy decoding for deterministic outputs
                 pad_token_id=tokenizer.eos_token_id
             )
