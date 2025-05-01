@@ -19,13 +19,14 @@ class VicunaToBertRegressor(nn.Module):
         self.max_output_length = max_output_length
 
         # Tokenizer Vicuny
-        self.vicuna_tokenizer = AutoTokenizer.from_pretrained(vicuna_name, use_fast=False)
+        self.vicuna_tokenizer = AutoTokenizer.from_pretrained(vicuna_name, use_fast=False, trust_remote_code=True)
 
         # ⚡ Vicuna (na GPU + float16 jeśli CUDA)
         self.vicuna = AutoModelForCausalLM.from_pretrained(
             vicuna_name,
             trust_remote_code=True,
-            device_map="auto"  # korzystamy z automatycznego mapowania na GPU
+            device_map="auto",
+            trust_remote_code=True
         )
         for param in self.vicuna.parameters():
             param.requires_grad = False
