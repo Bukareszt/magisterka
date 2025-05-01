@@ -41,7 +41,7 @@ stages:
       cmd: >
         python output_len_prediction.py
         --n_tokens ${item}
-        --data_size 10
+        --data_size 100
         --seed 42
         --use_wandb
       deps:
