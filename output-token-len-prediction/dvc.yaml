@@ -1,6 +1,6 @@
 stages:
   preprocess:
-    foreach: ${matrix.add_response_token}
+    foreach: [0, 1, 2, 3, 4, 5]
     do:
       cmd: >
         python preprocess_dataset.py 
@@ -11,12 +11,9 @@ stages:
         --seed 42
       deps:
         - preprocess_dataset.py
-      params:
-        - params.yaml:preprocess
-        - params.yaml:matrix.add_response_token
 
   train:
-    foreach: ${matrix.add_response_token}
+    foreach: [0, 1, 2, 3, 4, 5]
     do:
       cmd: >
         python latency_prediction.py 
@@ -34,6 +31,4 @@ stages:
         - evaluate.py
         - dataloading.py
         - logger.py
-      params:
-        - params.yaml:train
-        - params.yaml:matrix.add_response_token
+        - data/lmsys_first_round_data_vicuna-13b_preview${item}
