@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
-from transformers import get_linear_schedule_with_warmup, AutoTokenizer
+from transformers import get_linear_schedule_with_warmup, AutoTokenizer, AutoModelForCausalLM
 from datasets import load_dataset, Dataset
 import argparse
 import random
@@ -33,8 +33,35 @@ class OutputLengthDataset(Dataset):
             'output_length': self.output_lengths[idx]
         }
 
-def extract_first_round_prompt(example, vicuna_tokenizer):
-    """Extract the first round prompt and response length"""
+def generate_response_and_get_length(prompts, model, tokenizer, device, max_new_tokens=512, batch_size=8):
+    """Generate responses for prompts and return their token lengths"""
+    output_lengths = []
+    
+    # Process in batches to avoid OOM issues
+    for i in range(0, len(prompts), batch_size):
+        batch_prompts = prompts[i:i+batch_size]
+        inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True)
+        input_ids = inputs["input_ids"].to(device)
+        attention_mask = inputs["attention_mask"].to(device)
+        
+        with torch.no_grad():
+            outputs = model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask
+                do_sample=False,  # Use greedy decoding for deterministic outputs
+                pad_token_id=tokenizer.eos_token_id
+            )
+        
+        # Calculate response lengths (only count new tokens)
+        for j, (prompt_ids, output_ids) in enumerate(zip(input_ids, outputs)):
+            prompt_len = len(prompt_ids)
+            response_len = len(output_ids) - prompt_len
+            output_lengths.append(response_len)
+            
+    return output_lengths
+
+def extract_first_round_prompt(example):
+    """Extract the first round prompt"""
     conversation = example['conversation']
     user_content = ''
     
@@ -47,43 +74,25 @@ def extract_first_round_prompt(example, vicuna_tokenizer):
         else:
             break
     
-    # Combining the sentences from the first-round of the assistant response
-    assistant_content = ''
-    for j in range(i, len(conversation)):
-        sentence = conversation[j]
-        if sentence['role'] == 'assistant':
-            if j > i:
-                assistant_content += '\n'
-            assistant_content += conversation[j]['content']
-        else:
-            break
+    return user_content
 
-    # Add specified number of words from the response if requested
-    prompt = user_content
-        
-    # Calculate output length (number of tokens)
-    encoded_response = vicuna_tokenizer(assistant_content, truncation=False)
-    output_length = len(encoded_response['input_ids'])
-    
-    return prompt, output_length
-
-def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", first_round_only=False, seed=42, batch_size=1000):
+def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", batch_size=1000, 
+                          seed=42, inference_model=None, inference_tokenizer=None, device=None):
     """
     Load and prepare the lmsys-chat-1m dataset for output length prediction
     
     Args:
         data_size: Number of samples to use
         model_name: Name of the model to filter for
-        first_round_only: Whether to use only the first round of conversation
-        seed: Random seed
         batch_size: Process this many examples at a time to save memory
+        seed: Random seed
+        inference_model: Model to use for generating responses
+        inference_tokenizer: Tokenizer for the inference model
+        device: Device to run inference on
         
     Returns:
         train_prompts, val_prompts, train_lengths, val_lengths
     """
-    # Initialize tokenizer for measuring output lengths
-    vicuna_tokenizer = AutoTokenizer.from_pretrained("lmsys/vicuna-13b-v1.3", use_fast=False)
-    
     # Load dataset in streaming mode to save memory
     print(f"Loading lmsys/lmsys-chat-1m dataset in streaming mode (size: {data_size})...")
     dataset = load_dataset("lmsys/lmsys-chat-1m", split="train", streaming=True)
@@ -95,13 +104,8 @@ def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", first_round
     
     # Process dataset in batches to avoid memory issues
     all_prompts = []
-    all_lengths = []
     
-    def process_example(example):
-        prompt, output_len = extract_first_round_prompt(example, vicuna_tokenizer)
-        return {"prompt": prompt, "output_length": output_len}
-    
-    print("Processing conversations in batches...")
+    print("Extracting prompts from conversations...")
     batch_count = 0
     current_batch = []
     
@@ -113,25 +117,17 @@ def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", first_round
             batch_count += 1
             print(f"Processing batch {batch_count}...")
             
-            # Process batch
-            processed_batch = [process_example(ex) for ex in current_batch]
-            
-            # Filter for valid examples (output length > 1)
-            valid_examples = [ex for ex in processed_batch if ex["output_length"] > 1]
-            
-            # Add to our collections
-            all_prompts.extend([ex["prompt"] for ex in valid_examples])
-            all_lengths.extend([ex["output_length"] for ex in valid_examples])
+            # Extract prompts
+            batch_prompts = [extract_first_round_prompt(ex) for ex in current_batch]
+            all_prompts.extend(batch_prompts)
             
             # Clear the batch
             current_batch = []
     
     # Process any remaining examples
     if current_batch:
-        processed_batch = [process_example(ex) for ex in current_batch]
-        valid_examples = [ex for ex in processed_batch if ex["output_length"] > 1]
-        all_prompts.extend([ex["prompt"] for ex in valid_examples])
-        all_lengths.extend([ex["output_length"] for ex in valid_examples])
+        batch_prompts = [extract_first_round_prompt(ex) for ex in current_batch]
+        all_prompts.extend(batch_prompts)
     
     print(f"Total examples processed: {len(all_prompts)}")
     
@@ -141,7 +137,12 @@ def prepare_lmsys_dataset(data_size=100000, model_name="vicuna-13b", first_round
     random.shuffle(indices)
     
     all_prompts = [all_prompts[i] for i in indices]
-    all_lengths = [all_lengths[i] for i in indices]
+    
+    # Generate responses and get output lengths using the inference model
+    print("Generating responses to calculate output lengths...")
+    all_lengths = generate_response_and_get_length(
+        all_prompts, inference_model, inference_tokenizer, device
+    )
     
     # Split into train and validation sets
     split_idx = int(len(all_prompts) * 0.9)  # 10% validation
@@ -171,7 +172,7 @@ def train(
     output_dir="./saved_models",
     n_tokens=1,
     patience=3,
-    logger=None,  # Add logger parameter
+    logger=None,
 ):
     """Training loop for the model"""
     os.makedirs(output_dir, exist_ok=True)
@@ -301,7 +302,6 @@ def main():
     parser = argparse.ArgumentParser(description="Train output length prediction model")
     parser.add_argument("--data_size", type=int, default=100000, help="Number of samples to use from dataset")
     parser.add_argument("--model_name", type=str, default="vicuna-13b", help="Model name to filter in dataset")
-    parser.add_argument("--first_round_only", action="store_true", default=True, help="Use only first round of conversation")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size for training")
     parser.add_argument("--num_epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--learning_rate", type=float, default=3e-5, help="Learning rate")
@@ -324,6 +324,14 @@ def main():
     parser.add_argument("--streaming", action="store_true", 
                         help="Use streaming mode for dataset loading")
     
+    # Add inference model arguments
+    parser.add_argument("--inference_model", type=str, required=True,
+                       help="Model to use for generating responses (to create labels)")
+    parser.add_argument("--max_new_tokens", type=int, default=512,
+                       help="Maximum number of new tokens to generate for each response")
+    parser.add_argument("--inference_batch_size", type=int, default=8,
+                       help="Batch size for inference")
+    
     args = parser.parse_args()
 
     # Set random seeds
@@ -333,21 +341,30 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
     
+    # Set device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Load inference model and tokenizer
+    print(f"Loading inference model: {args.inference_model}")
+    inference_tokenizer = AutoTokenizer.from_pretrained(args.inference_model, use_fast=False)
+    inference_model = AutoModelForCausalLM.from_pretrained(args.inference_model).to(device)
+    
+    # Add special tokens if needed
+    if inference_tokenizer.pad_token is None:
+        inference_tokenizer.pad_token = inference_tokenizer.eos_token
+    
     print("Loading and preparing dataset...")
     train_prompts, val_prompts, train_lengths, val_lengths = prepare_lmsys_dataset(
         data_size=args.data_size,
         model_name=args.model_name,
-        first_round_only=args.first_round_only,
+        batch_size=args.processing_batch_size,
         seed=args.seed,
-        batch_size=args.processing_batch_size
+        inference_model=inference_model,
+        inference_tokenizer=inference_tokenizer,
+        device=device
     )
     
-    # Ensure prompts and lengths are proper lists
-    train_prompts = list(train_prompts)
-    val_prompts = list(val_prompts)
-    train_lengths = list(train_lengths)
-    val_lengths = list(val_lengths)
-    
+    # Create datasets and data loaders
     train_dataset = OutputLengthDataset(train_prompts, train_lengths)
     val_dataset = OutputLengthDataset(val_prompts, val_lengths)
     
@@ -368,7 +385,6 @@ def main():
     # Initialize model
     print(f"Initializing model with {args.vicuna_model} and {args.bert_model}")
     model = VicunaToBertRegressor(vicuna_name=args.vicuna_model, bert_name=args.bert_model)
-    device = model.device  # Use the device determined in the model initialization
     
     # Calculate warmup steps
     warmup_steps = int(len(train_dataloader) * args.num_epochs * args.warmup_ratio)
@@ -379,7 +395,6 @@ def main():
         config = {
             'task_type': 'regression',
             'model_name': args.model_name,
-            'first_round_only': args.first_round_only,
             'data_size': args.data_size,
             'batch_size': args.batch_size,
             'num_epochs': args.num_epochs,
@@ -390,6 +405,8 @@ def main():
             'bert_model': args.bert_model,
             'n_tokens': args.n_tokens,
             'seed': args.seed,
+            'inference_model': args.inference_model,
+            'max_new_tokens': args.max_new_tokens,
         }
         logger = Logger(
             config=config,
@@ -412,7 +429,7 @@ def main():
         warmup_steps=warmup_steps,
         output_dir=args.output_dir,
         n_tokens=args.n_tokens,
-        logger=logger  # Pass logger to train function
+        logger=logger
     )
     
     # Final evaluation
