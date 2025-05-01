@@ -4,9 +4,9 @@ stages:
     do:
       cmd: >
         python preprocess_dataset.py 
-        --model_name ${model_name} 
-        --task_type ${task_type} 
-        --data_size ${data_size}
+        --model_name "vicuna-13b"
+        --task_type 0
+        --data_size 100000
         --add_response_token ${item}
         --seed 42
       deps:
@@ -20,9 +20,9 @@ stages:
     do:
       cmd: >
         python latency_prediction.py 
-        --model_name ${model_name}
-        --task_type ${task_type}
-        --data_size ${data_size}
+        --model_name "vicuna-13b"
+        --task_type 0
+        --data_size 100000
         --add_response_token ${item}
         --seed 42
         --use_wandb
