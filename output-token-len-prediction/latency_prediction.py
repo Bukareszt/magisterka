@@ -25,6 +25,7 @@ from train import train, write_loss_to_file, eval_classification, eval_regressio
 from evaluate import predict, eval_all_models, plot_model_metrics
 from utils import get_output_file_name, get_dataset_path, extract_preview_tokens_from_dataset_path
 from logger import Logger
+import random
 
 if __name__ == '__main__':
     dataset_name = 'lmsys/lmsys-chat-1m'
@@ -44,6 +45,7 @@ if __name__ == '__main__':
     parser.add_argument('--wandb_project', type=str, help='W&B project name', default='latency-prediction')
     parser.add_argument('--log_model', action='store_true', help='Whether to log model checkpoints to W&B', default=False)
     parser.add_argument('--add_response_token', type=int, help='Number of response tokens to add', default=0)
+    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     args = parser.parse_args()
 
     # 0: regression; 1: binary classification; 2: multi-class classification; 
@@ -108,6 +110,14 @@ if __name__ == '__main__':
     test_batch_size = 1
     lr = 1e-5 if FLAG_BERT_TUNING else 1e-4
 
+    # Set the random seed for reproducibility
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+    print(f"Using random seed: {args.seed}")
+
     # Load dataset with streaming mode for memory efficiency
     print(f'Loading dataset from {dataset_path}...')
     dataset = datasets.load_from_disk(
@@ -123,7 +133,8 @@ if __name__ == '__main__':
         bert_tokenizer,
         flag_first_round_only=FLAG_FIRST_ROUND_ONLY,
         task_type=TASK_TYPE,
-        num_classes=num_classes
+        num_classes=num_classes,
+        seed=args.seed  # Pass the seed to the data loader
     )
     data_collator = DataCollatorWithPadding(tokenizer=bert_tokenizer)
     test_dataloader = DataLoader(test_dataset, shuffle=False, batch_size=test_batch_size, collate_fn=data_collator)
@@ -168,6 +179,7 @@ if __name__ == '__main__':
             'learning_rate': lr,
             'add_response_tokens': args.add_response_token,
             'dataset_path': dataset_path,
+            'seed': args.seed,  # Add seed to the config
         }
         logger = Logger(
             config=config,
