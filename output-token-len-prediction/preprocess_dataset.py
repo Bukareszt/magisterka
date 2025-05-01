@@ -264,11 +264,11 @@ if __name__ == '__main__':
     # Create dataset path with information about response tokens
     dataset_path = args.model_name.lower()+'_' if USE_SPECIFIC_MODEL else ''
     dataset_path = dataset_path if task_type == 0 else dataset_path + 'cls_' if task_type == 1 else dataset_path + 'multi_cls_'
-    
-    # Add information about response preview tokens
+
+    # Add information about response preview tokens to the path name
     if ADD_RESPONSE_TOKENS > 0:
         dataset_path += f'preview{ADD_RESPONSE_TOKENS}_'
-        
+    
     if FLAG_FIRST_ROUND_ONLY:
         dataset_path = 'first_round_data_' + dataset_path
     elif FLAG_HEAD_TAIL:

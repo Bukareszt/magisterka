@@ -43,6 +43,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_wandb', action='store_true', help='Whether to use Weights & Biases for logging', default=True)
     parser.add_argument('--wandb_project', type=str, help='W&B project name', default='latency-prediction')
     parser.add_argument('--log_model', action='store_true', help='Whether to log model checkpoints to W&B', default=False)
+    parser.add_argument('--add_response_token', type=int, help='Number of response tokens to add', default=0)
     args = parser.parse_args()
 
     # 0: regression; 1: binary classification; 2: multi-class classification; 
@@ -87,7 +88,8 @@ if __name__ == '__main__':
         flag_l1_loss=FLAG_L1_LOSS,
         selected_data_size=selected_data_size,
         model_name=args.model_name,
-        flag_head_tail=FLAG_HEAD_TAIL
+        flag_head_tail=FLAG_HEAD_TAIL,
+        add_response_tokens=args.add_response_token
     )
     
     dataset_path = get_dataset_path(
@@ -97,7 +99,8 @@ if __name__ == '__main__':
         selected_data_size=selected_data_size,
         model_name=args.model_name,
         flag_head_tail=FLAG_HEAD_TAIL,
-        customized_path=args.dataset_path if args.customized else None
+        customized_path=args.dataset_path if args.customized else None,
+        add_response_tokens=args.add_response_token
     )
 
     num_epochs = 6
@@ -112,7 +115,7 @@ if __name__ == '__main__':
         keep_in_memory=False  # Don't keep whole dataset in memory
     )
     print(f'Dataset loaded: {len(dataset)} samples')
-    
+
     train_dataloader, validation_dataloader, test_dataset, weights = generate_dataloaders(
         dataset, 
         train_batch_size, 
@@ -151,9 +154,6 @@ if __name__ == '__main__':
 
     # Initialize the logger if W&B is enabled
     if args.use_wandb:
-        # Extract preview tokens from dataset path
-        add_response_tokens = extract_preview_tokens_from_dataset_path(dataset_path)
-        
         config = {
             'task_type': TASK_TYPE,
             'vicuna_data_only': FLAG_VICUNA_DATA_ONLY,
@@ -166,7 +166,7 @@ if __name__ == '__main__':
             'num_epochs': num_epochs,
             'batch_size': train_batch_size,
             'learning_rate': lr,
-            'add_response_tokens': add_response_tokens,  # Use the extracted value
+            'add_response_tokens': args.add_response_token,
             'dataset_path': dataset_path,
         }
         logger = Logger(

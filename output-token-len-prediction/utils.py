@@ -53,8 +53,8 @@ def get_output_file_name(flag_first_round_only=True, flag_vicuna_data_only=False
     elif task_type == 4:
         output_filename += 'ordinal_cls_'
         output_filename += 'l1_' if flag_l1_loss else 'mse_'
-    if add_response_tokens > 0:
-        output_filename += f'preview{add_response_tokens}_'
+        
+    output_filename += f'preview{add_response_tokens}_'
     output_filename += f'{int(selected_data_size / 1000)}K.csv'
     return output_filename
 

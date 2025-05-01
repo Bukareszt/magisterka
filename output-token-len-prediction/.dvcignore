@@ -1,0 +1,10 @@
+# Add patterns of files dvc should ignore, which is similar to .gitignore
+/models
+/data
+/wandb
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.dll 

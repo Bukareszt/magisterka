@@ -1,0 +1,25 @@
+# Common parameters
+model_name: "vicuna-13b"
+task_type: 0  # 0 for regression, 1 for binary cls, 2 for multi-cls
+data_size: 100000
+all_models: false
+multi_round: false
+head_tail: false
+
+# Matrix parameters for experiments
+matrix:
+  add_response_token: [0, 1, 2, 3, 4, 5]
+
+# Parameters for preprocessing
+preprocess:
+  seed: 42
+  dataset_path: "data/lmsys_first_round_data_vicuna-13b"
+
+# Parameters for training
+train:
+  bert_tiny: false
+  l1_loss: false
+  output_filename: "predictions_bert_base_warmup_vicuna-13b_first_round_reg_mse"
+  use_wandb: true
+  log_model: false
+  wandb_project: "latency-prediction" 
