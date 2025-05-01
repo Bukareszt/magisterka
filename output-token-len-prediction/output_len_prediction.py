@@ -171,9 +171,10 @@ def train(
     output_dir="./saved_models",
     n_tokens=1,
     patience=3,
-    logger=None,  # Add logger parameter
+    logger=None,
+    gradient_accumulation_steps=4,  # Add gradient accumulation parameter
 ):
-    """Training loop for the model"""
+    """Training loop for the model with gradient accumulation and better CUDA memory management"""
     os.makedirs(output_dir, exist_ok=True)
     
     # Set up optimizer and scheduler
@@ -183,7 +184,7 @@ def train(
         weight_decay=weight_decay
     )
     
-    total_steps = len(train_dataloader) * num_epochs
+    total_steps = len(train_dataloader) * num_epochs // gradient_accumulation_steps
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=warmup_steps,
@@ -204,27 +205,44 @@ def train(
         model.train()
         train_loss = 0.0
         train_steps = 0
+        optimizer.zero_grad()  # Zero gradients at the beginning of epoch
         
         train_progress_bar = tqdm(train_dataloader, desc="Training")
-        for prompts, output_lengths in train_progress_bar:
+        for batch_idx, (prompts, output_lengths) in enumerate(train_progress_bar):
+            # Move to device
             output_lengths = output_lengths.to(device)
             
             # Forward pass
             predictions = model(prompts, n_tokens=n_tokens)
             
-            # Calculate loss
-            loss = criterion(predictions, output_lengths)
+            # Calculate loss and normalize by gradient_accumulation_steps
+            loss = criterion(predictions, output_lengths) / gradient_accumulation_steps
             
             # Backward pass
-            optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-            scheduler.step()
             
-            train_loss += loss.item()
+            # Detach predictions and free memory
+            predictions = predictions.detach()
+            del predictions
+            
+            # Only update on accumulation steps or at the end of the dataset
+            if (batch_idx + 1) % gradient_accumulation_steps == 0 or batch_idx == len(train_dataloader) - 1:
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                
+                # Update parameters
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+                
+                # Explicit CUDA cache clearing
+                if device.type == 'cuda':
+                    torch.cuda.empty_cache()
+            
+            # Multiply back for logging
+            train_loss += loss.item() * gradient_accumulation_steps
             train_steps += 1
-            train_progress_bar.set_postfix({"loss": loss.item()})
+            train_progress_bar.set_postfix({"loss": loss.item() * gradient_accumulation_steps})
         
         avg_train_loss = train_loss / train_steps
         print(f"Average training loss: {avg_train_loss:.4f}")
@@ -250,6 +268,11 @@ def train(
                 # Calculate MAE
                 mae = torch.abs(predictions - output_lengths).mean().item()
                 val_mae += mae
+                
+                # Free memory
+                del predictions
+                if device.type == 'cuda':
+                    torch.cuda.empty_cache()
                 
                 val_steps += 1
                 val_progress_bar.set_postfix({"val_loss": loss.item(), "val_mae": mae})
@@ -323,6 +346,8 @@ def main():
                         help="Batch size for dataset processing (memory optimization)")
     parser.add_argument("--streaming", action="store_true", 
                         help="Use streaming mode for dataset loading")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=4,
+                        help="Number of steps to accumulate gradients (increases effective batch size)")
     
     args = parser.parse_args()
 
@@ -412,7 +437,8 @@ def main():
         warmup_steps=warmup_steps,
         output_dir=args.output_dir,
         n_tokens=args.n_tokens,
-        logger=logger  # Pass logger to train function
+        logger=logger,
+        gradient_accumulation_steps=args.gradient_accumulation_steps  # Pass gradient accumulation steps
     )
     
     # Final evaluation
@@ -431,6 +457,11 @@ def main():
             mae = torch.abs(predictions - output_lengths).mean().item()
             val_mae += mae
             val_steps += 1
+            
+            # Free memory
+            del predictions
+            if device.type == 'cuda':
+                torch.cuda.empty_cache()
     
     avg_val_loss = val_loss / val_steps
     avg_val_mae = val_mae / val_steps
