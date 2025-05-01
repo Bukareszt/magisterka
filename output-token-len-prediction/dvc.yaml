@@ -14,10 +14,6 @@ stages:
       params:
         - params.yaml:preprocess
         - params.yaml:matrix.add_response_token
-      outs:
-        - ${dataset_path}_preview${item}:
-            cache: true
-            persist: true
 
   train:
     foreach: ${matrix.add_response_token}
@@ -41,11 +37,3 @@ stages:
       params:
         - params.yaml:train
         - params.yaml:matrix.add_response_token
-      metrics:
-        - ./metrics/${output_filename}_preview${item}.txt:
-            cache: false
-      outs:
-        - ./models/${output_filename}_preview${item}.pth:
-            cache: true
-        - ./results/${output_filename}_preview${item}:
-            cache: true 
