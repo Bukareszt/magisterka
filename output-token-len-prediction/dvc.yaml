@@ -39,8 +39,7 @@ stages:
     foreach: [0, 2, 4, 6, 8, 10]
     do:
       cmd: >
-        python output_len_prediction.py 
-        --model_name "vicuna-13b"
+        python output_len_prediction.py
         --n_tokens ${item}
         --data_size 10
         --seed 42
