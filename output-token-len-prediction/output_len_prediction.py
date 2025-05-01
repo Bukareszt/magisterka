@@ -298,7 +298,7 @@ def main():
     print("Loading and preparing dataset...")
     train_prompts, val_prompts, train_lengths, val_lengths = prepare_lmsys_dataset(
         data_size=args.data_size,
-        model_name='vicuna-13b-v1.3',
+        model_name='vicuna-13b',
         first_round_only=args.first_round_only,
         seed=args.seed
     )
