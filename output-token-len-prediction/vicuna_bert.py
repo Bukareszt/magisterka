@@ -68,7 +68,7 @@ class VicunaToBertRegressor(nn.Module):
             )
         # Hidden states z ostatniej warstwy (tylko inputy)
         last_hidden_states = vicuna_outputs.hidden_states[-1]  # shape: [B, T, D_vicuna]
-        gen_hidden = last_hidden_states[0][:, -n_tokens:, :]  # [B, n_tokens, D_vicuna]
+        gen_hidden = last_hidden_states[:, -n_tokens:, :]  # [B, n_tokens, D_vicuna]
 
         # ⚙️ Adapter → BERT
         gen_hidden = gen_hidden.to(self.device)
